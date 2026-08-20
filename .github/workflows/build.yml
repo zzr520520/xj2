@@ -1,0 +1,46 @@
+name: Build deb
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Theos
+        uses: wwg135/theos-action@v1
+        with:
+          cache: true
+          cache-dir-theos: ${{ github.workspace }}/theos
+          cache-dir-sdks: ${{ github.workspace }}/theos/sdks
+
+      - name: Build package
+        run: |
+          export THEOS=${{ github.workspace }}/theos
+          rm -f packages/*.deb
+          make clean
+          make package FINALPACKAGE=1 THEOS=$THEOS
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FakeDeviceHook-deb
+          path: ${{ github.workspace }}/packages/*.deb
+
+      - name: Commit deb to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/*.deb || true
+          if git diff --cached --quiet; then
+            echo "No deb to commit"
+          else
+            git commit -m "CI: Auto-build deb package [skip ci]"
+            git push
+          fi

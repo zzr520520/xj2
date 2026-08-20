@@ -1,0 +1,10 @@
+Package: com.research.fakedevicehook
+Name: FakeDeviceHook
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: iOS device fingerprint spoofing tweak - 8 module injection (IOKit/Metal/Location/Carrier/JailbreakBypass/IAP/UA) + network carrier emulation (4 operators/no-SIM/airplane/WiFi)
+Maintainer: research
+Author: research
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 14.0)
+Priority: optional

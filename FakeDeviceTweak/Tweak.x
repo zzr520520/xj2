@@ -64,8 +64,7 @@ static void loadProfile() {
 // ----------------------------------------------------
 // 2. Sysctl / Posix 硬件层伪造
 // ----------------------------------------------------
-int (*orig_sysctlbyname)(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
-int fake_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+%hookf(int, sysctlbyname, const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     if (g_profile && name) {
         if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.model") == 0) {
             if (oldp && g_profile[@"hw_machine"]) {
@@ -98,7 +97,7 @@ int fake_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp,
             }
         }
     }
-    return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+    return %orig;
 }
 
 // ----------------------------------------------------
@@ -201,16 +200,14 @@ static BOOL is_jb_path(const char *path) {
     return NO;
 }
 
-int fake_stat(const char *path, struct stat *buf) {
+%hookf(int, stat, const char *path, struct stat *buf) {
     if (is_jb_path(path)) { errno = ENOENT; return -1; }
-    extern int orig_stat(const char *, struct stat *);
-    return orig_stat(path, buf);
+    return %orig;
 }
 
-int fake_access(const char *path, int mode) {
+%hookf(int, access, const char *path, int mode) {
     if (is_jb_path(path)) { errno = ENOENT; return -1; }
-    extern int orig_access(const char *, int);
-    return orig_access(path, mode);
+    return %orig;
 }
 
 // ----------------------------------------------------
