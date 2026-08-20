@@ -17,13 +17,3 @@ FakeDeviceHook_CFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/application.mk
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-# Build targets
-all: clean package
-
-clean:
-	rm -rf packages/*.deb
-
-package:
-	@echo "Building FinalPackage..."
-	@echo "Output: packages/com.research.fakedevicesuite_1.0.0_iphoneos-arm64.deb"
