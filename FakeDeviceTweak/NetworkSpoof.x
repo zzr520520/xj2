@@ -1,8 +1,13 @@
+// ============================================================
+// NetworkSpoof.x - 网络模式与运营商独立伪造
+// 支持: 无卡/飞行/移动/联通/电信/广电/WiFi模式
+// ============================================================
+
 #import <CoreTelephony/CTCarrier.h>
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <SystemConfiguration/SystemConfiguration.h>
-#import <Network/Network.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
+#import <Network/Network.h>
 
 extern NSDictionary *g_profile;
 
@@ -12,77 +17,82 @@ extern NSDictionary *g_profile;
 %hook CTTelephonyNetworkInfo
 
 - (CTCarrier *)subscriberCellularProvider {
-    NSString *mode = g_profile[@"network_mode"];
-    if ([mode isEqualToString:@"NO_SIM"] || [mode isEqualToString:@"AIRPLANE_MODE"] || [mode isEqualToString:@"WIFI_ONLY"]) {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"NO_SIM"] || [netMode isEqualToString:@"AIRPLANE"] || [netMode isEqualToString:@"WIFI_ONLY"]) {
         return nil;
     }
     return %orig;
 }
 
 - (NSDictionary<NSString *, CTCarrier *> *)serviceSubscriberCellularProviders {
-    NSString *mode = g_profile[@"network_mode"];
-    if ([mode isEqualToString:@"NO_SIM"] || [mode isEqualToString:@"AIRPLANE_MODE"] || [mode isEqualToString:@"WIFI_ONLY"]) {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"NO_SIM"] || [netMode isEqualToString:@"AIRPLANE"] || [netMode isEqualToString:@"WIFI_ONLY"]) {
         return @{};
     }
     return %orig;
 }
 
 - (NSString *)currentRadioAccessTechnology {
-    NSString *mode = g_profile[@"network_mode"];
-    if ([mode isEqualToString:@"NO_SIM"] || [mode isEqualToString:@"AIRPLANE_MODE"] || [mode isEqualToString:@"WIFI_ONLY"]) {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"NO_SIM"] || [netMode isEqualToString:@"AIRPLANE"] || [netMode isEqualToString:@"WIFI_ONLY"]) {
         return nil;
     }
-    return g_profile[@"radioTech"] ?: CTRadioAccessTechnologyLTE;
+    return g_profile[@"radio_tech"] ?: CTRadioAccessTechnologyLTE;
 }
 
 - (NSDictionary<NSString *, NSString *> *)serviceCurrentRadioAccessTechnology {
-    NSString *mode = g_profile[@"network_mode"];
-    if ([mode isEqualToString:@"NO_SIM"] || [mode isEqualToString:@"AIRPLANE_MODE"] || [mode isEqualToString:@"WIFI_ONLY"]) {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"NO_SIM"] || [netMode isEqualToString:@"AIRPLANE"] || [netMode isEqualToString:@"WIFI_ONLY"]) {
         return @{};
     }
-    return @{@"0000000100000001": (g_profile[@"radioTech"] ?: CTRadioAccessTechnologyNRNSA)};
-}
-
-%end
-
-%hook CTCarrier
-
-- (NSString *)carrierName {
-    return g_profile[@"carrierName"] ?: %orig;
-}
-
-- (NSString *)mobileCountryCode {
-    return g_profile[@"mobileCountryCode"] ?: %orig;
-}
-
-- (NSString *)mobileNetworkCode {
-    return g_profile[@"mobileNetworkCode"] ?: %orig;
-}
-
-- (NSString *)isoCountryCode {
-    return g_profile[@"isoCountryCode"] ?: %orig;
-}
-
-- (BOOL)allowsVOIP {
-    return [g_profile[@"allowsVOIP"] boolValue];
+    return @{@"0000000100000001": (g_profile[@"radio_tech"] ?: CTRadioAccessTechnologyNRNSA)};
 }
 
 %end
 
 // ============================================================
-// 2. SystemConfiguration 飞行模式与可达性伪装
+// 2. 四大运营商属性精准匹配 (移动/联通/电信/广电)
+// ============================================================
+%hook CTCarrier
+
+- (NSString *)carrierName {
+    return g_profile[@"carrier_name"] ?: %orig;
+}
+
+- (NSString *)mobileCountryCode {
+    return g_profile[@"mcc"] ?: %orig;
+}
+
+- (NSString *)mobileNetworkCode {
+    return g_profile[@"mnc"] ?: %orig;
+}
+
+- (NSString *)isoCountryCode {
+    return g_profile[@"iso_country"] ?: @"cn";
+}
+
+- (BOOL)allowsVOIP {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"NO_SIM"] || [netMode isEqualToString:@"AIRPLANE"]) return NO;
+    return YES;
+}
+
+%end
+
+// ============================================================
+// 3. 飞行模式与网络可达性底层拦截 (SCNetworkReachability)
 // ============================================================
 %hookf(Boolean, SCNetworkReachabilityGetFlags, SCNetworkReachabilityRef target, SCNetworkReachabilityFlags *flags) {
     if (!flags) return %orig;
 
-    NSString *mode = g_profile[@"network_mode"];
-    if ([mode isEqualToString:@"AIRPLANE_MODE"]) {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"AIRPLANE"]) {
         *flags = 0;
         return TRUE;
-    } else if ([mode isEqualToString:@"WIFI_ONLY"]) {
+    } else if ([netMode isEqualToString:@"WIFI_ONLY"]) {
         *flags = kSCNetworkReachabilityFlagsReachable;
         return TRUE;
-    } else if ([mode hasPrefix:@"CHINA_"]) {
+    } else if ([netMode hasPrefix:@"CHINA_"] || [netMode isEqualToString:@"CELLULAR"]) {
         *flags = kSCNetworkReachabilityFlagsReachable | kSCNetworkReachabilityFlagsIsWWAN;
         return TRUE;
     }
@@ -91,20 +101,20 @@ extern NSDictionary *g_profile;
 }
 
 // ============================================================
-// 3. Wi-Fi 模式与硬件 MAC/BSSID 深度伪造
+// 4. Wi-Fi 模式与硬件 MAC/BSSID 深度伪造
 // ============================================================
 %hookf(CFArrayRef, CNCopySupportedInterfaces) {
-    NSString *mode = g_profile[@"network_mode"];
-    if ([mode isEqualToString:@"AIRPLANE_MODE"]) {
+    NSString *netMode = g_profile[@"network_mode"];
+    if ([netMode isEqualToString:@"AIRPLANE"]) {
         return NULL;
     }
     return %orig;
 }
 
 %hookf(CFDictionaryRef, CNCopyCurrentNetworkInfo, CFStringRef interfaceName) {
-    NSString *mode = g_profile[@"network_mode"];
-    
-    if ([mode isEqualToString:@"AIRPLANE_MODE"] || [g_profile[@"disable_wifi_leak"] boolValue]) {
+    NSString *netMode = g_profile[@"network_mode"];
+
+    if ([netMode isEqualToString:@"AIRPLANE"] || [g_profile[@"disable_wifi_leak"] boolValue]) {
         return NULL;
     }
 

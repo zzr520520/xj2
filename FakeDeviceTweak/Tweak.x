@@ -1,12 +1,22 @@
+// ============================================================
+// FakeDeviceHook v2.0 - 整合《新设备插件逆向分析报告》
+// 10大模块: IOKit/Sysctl/UIScreen/GPS/JailbreakBypass/
+//           StoreKit/UA/IDFA/IDFV/NetworkCarrier
+// 架构: Rootless (Dopamine/Palera1n) arm64/arm64e
+// ============================================================
+
 #import <UIKit/UIKit.h>
 #import <IOKit/IOKitLib.h>
 #import <CoreLocation/CoreLocation.h>
 #import <StoreKit/StoreKit.h>
+#import <AdSupport/AdSupport.h>
+#import <Security/Security.h>
 #import <sys/utsname.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
 #import <mach-o/dyld.h>
 
+// 全局配置 (非static, 允许NetworkSpoof.x通过extern访问)
 NSDictionary *g_profile = nil;
 
 static void loadProfile() {
@@ -15,9 +25,9 @@ static void loadProfile() {
     g_profile = [NSDictionary dictionaryWithContentsOfFile:path];
 }
 
-// ----------------------------------------------------
-// 1. IOKit 硬件指纹 (序列号/ECID/UDID/电池参数/主板码)
-// ----------------------------------------------------
+// ============================================================
+// 模块1: IOKit 硬件指纹 (序列号/ECID/UDID/电池参数/主板码)
+// ============================================================
 %hookf(CFTypeRef, IORegistryEntryCreateCFProperty, io_registry_entry_t entry, CFStringRef key, CFAllocatorRef allocator, IOOptionBits options) {
     if (!g_profile) return %orig;
     NSString *k = (__bridge NSString *)key;
@@ -55,9 +65,9 @@ static void loadProfile() {
     return %orig;
 }
 
-// ----------------------------------------------------
-// 2. Sysctl 硬件层伪造
-// ----------------------------------------------------
+// ============================================================
+// 模块2: Sysctl 硬件层伪造 (hw.machine/hw.memsize/hw.ncpu/kern.boottime)
+// ============================================================
 %hookf(int, sysctlbyname, const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     if (g_profile && name) {
         if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.model") == 0) {
@@ -94,9 +104,9 @@ static void loadProfile() {
     return %orig;
 }
 
-// ----------------------------------------------------
-// 3. 屏幕显示篡改
-// ----------------------------------------------------
+// ============================================================
+// 模块3: 屏幕显示篡改 (UIScreen bounds/scale/nativeScale/maxFPS)
+// ============================================================
 %hook UIScreen
 - (CGRect)bounds {
     if (g_profile[@"pt_width"] && g_profile[@"pt_height"]) {
@@ -124,9 +134,9 @@ static void loadProfile() {
 }
 %end
 
-// ----------------------------------------------------
-// 4. GPS 定位伪造与微米级漂移
-// ----------------------------------------------------
+// ============================================================
+// 模块4: GPS 定位伪造与微米级漂移 (防静态坐标风控)
+// ============================================================
 %hook CLLocationManager
 - (CLLocation *)location {
     CLLocation *orig = %orig;
@@ -135,6 +145,7 @@ static void loadProfile() {
     double lat = [g_profile[@"latitude"] doubleValue];
     double lon = [g_profile[@"longitude"] doubleValue];
     
+    // 微米级动态抖动算法
     double driftLat = ((double)arc4random_uniform(200) - 100.0) / 1000000.0;
     double driftLon = ((double)arc4random_uniform(200) - 100.0) / 1000000.0;
 
@@ -146,16 +157,17 @@ static void loadProfile() {
 }
 %end
 
-// ----------------------------------------------------
-// 5. 越狱环境隐藏
-// ----------------------------------------------------
+// ============================================================
+// 模块5: 越狱环境隐藏 (Bypass 14+ 常见检测路径)
+// ============================================================
 static BOOL is_jb_path(const char *path) {
     if (!path) return NO;
     static const char *jb_indicators[] = {
         "/Applications/Cydia.app", "/Applications/Sileo.app", "/Applications/Zebra.app",
         "/Library/MobileSubstrate", "/usr/sbin/sshd", "/bin/bash", "/bin/sh",
         "/etc/apt", "/var/lib/apt", "/var/lib/cydia", "/User/Applications",
-        "/usr/lib/libsubstitute.dylib", "/usr/lib/substrate", "/private/var/stash"
+        "/usr/lib/libsubstitute.dylib", "/usr/lib/substrate", "/private/var/stash",
+        "/var/jb", "/var/jb/usr/lib", "/var/jb/Library/MobileSubstrate"
     };
     for (int i = 0; i < sizeof(jb_indicators)/sizeof(char *); i++) {
         if (strstr(path, jb_indicators[i])) return YES;
@@ -173,9 +185,9 @@ static BOOL is_jb_path(const char *path) {
     return %orig;
 }
 
-// ----------------------------------------------------
-// 6. StoreKit 内购拦截
-// ----------------------------------------------------
+// ============================================================
+// 模块6: StoreKit 内购拦截与事务伪造
+// ============================================================
 %hook SKPaymentQueue
 - (void)addPayment:(SKPayment *)payment {
     if ([g_profile[@"bypass_iap"] boolValue]) {
@@ -186,9 +198,9 @@ static BOOL is_jb_path(const char *path) {
 }
 %end
 
-// ----------------------------------------------------
-// 7. User-Agent 篡改
-// ----------------------------------------------------
+// ============================================================
+// 模块7: User-Agent 全局篡改 (通过 NSUserDefaults)
+// ============================================================
 %hook NSUserDefaults
 - (NSString *)stringForKey:(NSString *)defaultName {
     if ([defaultName isEqualToString:@"UserAgent"] && g_profile[@"custom_ua"]) {
@@ -197,6 +209,77 @@ static BOOL is_jb_path(const char *path) {
     return %orig;
 }
 %end
+
+// ============================================================
+// 模块8: IDFA 伪造 (ASIdentifierManager - 参考逆向报告第3节)
+// 模板: 11111111-1234-1234-1234-12%@ 格式
+// ============================================================
+%hook ASIdentifierManager
+- (NSUUID *)advertisingIdentifier {
+    if (g_profile[@"fake_idfa"]) {
+        return [[NSUUID alloc] initWithUUIDString:g_profile[@"fake_idfa"]];
+    }
+    // 动态构造: 固定前缀 + 随机后缀
+    NSString *suffix = [NSString stringWithFormat:@"%012d", arc4random_uniform(1000000000)];
+    NSString *fakeIDFA = [NSString stringWithFormat:@"11111111-1234-1234-1234-12%@", suffix];
+    return [[NSUUID alloc] initWithUUIDString:fakeIDFA];
+}
+%end
+
+// ============================================================
+// 模块9: IDFV 伪造 (UIDevice identifierForVendor)
+// ============================================================
+%hook UIDevice
+- (NSUUID *)identifierForVendor {
+    if (g_profile[@"fake_idfv"]) {
+        return [[NSUUID alloc] initWithUUIDString:g_profile[@"fake_idfv"]];
+    }
+    // 动态构造: 固定前缀 + 随机后缀
+    NSString *suffix = [NSString stringWithFormat:@"%012d", arc4random_uniform(1000000000)];
+    NSString *fakeIDFV = [NSString stringWithFormat:@"22222222-1234-1234-1234-22%@", suffix];
+    return [[NSUUID alloc] initWithUUIDString:fakeIDFV];
+}
+%end
+
+// ============================================================
+// 模块10: 本地凭证强力擦除引擎 (SSKeychain + removePersistentDomainForName)
+// 参考《新设备插件》逆向报告 - 一键新机核心清理
+// ============================================================
+void executeDeepWipe(NSString *bundleId, NSString *sandboxPath) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    // A. NSUserDefaults 域全量清空
+    [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:bundleId];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+
+    // B. Keychain 凭证安全擦除 (Generic/Internet/Cert/Key/Identity)
+    NSArray *secClasses = @[
+        (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecClassInternetPassword,
+        (__bridge id)kSecClassCertificate,
+        (__bridge id)kSecClassKey,
+        (__bridge id)kSecClassIdentity
+    ];
+    for (id secClass in secClasses) {
+        NSDictionary *query = @{
+            (__bridge id)kSecClass: secClass,
+            (__bridge id)kSecAttrAccessGroup: bundleId
+        };
+        SecItemDelete((__bridge CFDictionaryRef)query);
+    }
+
+    // C. 沙盒目录深度清理 (Documents/Caches/Preferences/WebKit等)
+    NSArray *dirsToClean = @[
+        @"Documents", @"Library/Caches", @"Library/Preferences",
+        @"tmp", @"Library/WebKit", @"Library/Application Support",
+        @"Library/Cookies", @"Library/Saved Application State", @"Library/HTTPStorages"
+    ];
+    for (NSString *sub in dirsToClean) {
+        NSString *fullPath = [sandboxPath stringByAppendingPathComponent:sub];
+        [fm removeItemAtPath:fullPath error:nil];
+        [fm createDirectoryAtPath:fullPath withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+}
 
 %ctor {
     loadProfile();

@@ -1,4 +1,4 @@
-name: Build deb
+name: Build deb (Rootless)
 
 on:
   push:
@@ -18,17 +18,17 @@ jobs:
       - name: Prepare Theos
         uses: wwg135/theos-action@v1
 
-      - name: Build package
+      - name: Build rootless package
         run: |
           export THEOS=${{ github.workspace }}/theos
           rm -f packages/*.deb
           make clean THEOS=$THEOS
-          make package FINALPACKAGE=1 THEOS=$THEOS
+          make package FINALPACKAGE=1 THEOS=$THEOS THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FakeDeviceHook-deb
+          name: FakeDeviceHook-rootless-deb
           path: ${{ github.workspace }}/packages/*.deb
 
       - name: Commit deb to repo
@@ -39,6 +39,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No deb to commit"
           else
-            git commit -m "CI: Auto-build deb package [skip ci]"
+            git commit -m "CI: Auto-build rootless deb (arm64) [skip ci]"
             git push
           fi
