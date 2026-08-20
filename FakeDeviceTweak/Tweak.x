@@ -7,7 +7,7 @@
 #import <sys/stat.h>
 #import <mach-o/dyld.h>
 
-static NSDictionary *g_profile = nil;
+NSDictionary *g_profile = nil;
 
 static void loadProfile() {
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
