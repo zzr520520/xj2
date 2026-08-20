@@ -1,8 +1,8 @@
 Package: com.research.fakedevicehook
 Name: FakeDeviceHook
-Version: 2.0.0
+Version: 3.0.0
 Architecture: iphoneos-arm64
-Description: iOS device fingerprint spoofing suite - 10 module injection (IOKit/Sysctl/UIScreen/GPS/JailbreakBypass/StoreKit/UA/IDFA/IDFV/NetworkCarrier) with rootless support for Dopamine/Palera1n
+Description: iOS device fingerprint spoofing suite v3.0 - 13 module anti-crash injection with process isolation, SpringBoard blacklist, IDFA/IDFV/IOKit/Sysctl/UIScreen/GPS/NetworkCarrier/StoreKit/UA/DeepWipe. RootHide/Rootless safe.
 Maintainer: research
 Author: research
 Section: Tweaks
