@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = FakeDeviceHook
 FakeDeviceHook_FILES = FakeDeviceTweak/Tweak.x FakeDeviceTweak/NetworkSpoof.x
-FakeDeviceHook_FRAMEWORKS = UIKit IOKit CoreLocation CoreTelephony Metal StoreKit WebKit
-FakeDeviceHook_CFLAGS = -fobjc-arc
+FakeDeviceHook_FRAMEWORKS = UIKit IOKit CoreLocation CoreTelephony StoreKit SystemConfiguration
+FakeDeviceHook_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 
 include $(THEOS_MAKE_PATH)/tweak.mk

@@ -1,12 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <IOKit/IOKitLib.h>
-#import <Metal/Metal.h>
 #import <CoreLocation/CoreLocation.h>
-#import <CoreTelephony/CTCarrier.h>
-#import <CoreTelephony/CTTelephonyNetworkInfo.h>
-#import <SystemConfiguration/CaptiveNetwork.h>
 #import <StoreKit/StoreKit.h>
-#import <WebKit/WebKit.h>
 #import <sys/utsname.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
@@ -42,7 +37,6 @@ static void loadProfile() {
     if ([k isEqualToString:@"MLBSerialNumber"] && g_profile[@"mlb_serial"]) {
         return (__bridge_retained CFTypeRef)g_profile[@"mlb_serial"];
     }
-    // 电池参数深度篡改
     if ([k isEqualToString:@"CycleCount"] && g_profile[@"battery_cycle"]) {
         return (__bridge_retained CFTypeRef)g_profile[@"battery_cycle"];
     }
@@ -62,7 +56,7 @@ static void loadProfile() {
 }
 
 // ----------------------------------------------------
-// 2. Sysctl / Posix 硬件层伪造
+// 2. Sysctl 硬件层伪造
 // ----------------------------------------------------
 %hookf(int, sysctlbyname, const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     if (g_profile && name) {
@@ -101,7 +95,7 @@ static void loadProfile() {
 }
 
 // ----------------------------------------------------
-// 3. GPU Metal / 屏幕显示篡改
+// 3. 屏幕显示篡改
 // ----------------------------------------------------
 %hook UIScreen
 - (CGRect)bounds {
@@ -111,57 +105,27 @@ static void loadProfile() {
     return %orig;
 }
 - (CGFloat)scale {
-    return g_profile[@"scale"] ? [g_profile[@"scale"] doubleValue] : %orig;
+    if (g_profile[@"scale"]) {
+        return [g_profile[@"scale"] doubleValue];
+    }
+    return %orig;
 }
 - (CGFloat)nativeScale {
-    return g_profile[@"scale"] ? [g_profile[@"scale"] doubleValue] : %orig;
+    if (g_profile[@"scale"]) {
+        return [g_profile[@"scale"] doubleValue];
+    }
+    return %orig;
 }
 - (NSInteger)maximumFramesPerSecond {
-    return g_profile[@"max_fps"] ? [g_profile[@"max_fps"] integerValue] : %orig;
-}
-%end
-
-// ----------------------------------------------------
-// 4. 蜂窝网络 / 运营商 / WiFi MAC
-// ----------------------------------------------------
-%hook CTCarrier
-- (NSString *)carrierName { return g_profile[@"carrier_name"] ?: %orig; }
-- (NSString *)mobileCountryCode { return g_profile[@"mcc"] ?: %orig; }
-- (NSString *)mobileNetworkCode { return g_profile[@"mnc"] ?: %orig; }
-- (NSString *)isoCountryCode { return g_profile[@"iso_country"] ?: %orig; }
-- (BOOL)allowsVOIP { return YES; }
-%end
-
-%hook CTTelephonyNetworkInfo
-- (NSString *)currentRadioAccessTechnology {
-    return g_profile[@"radio_tech"] ?: %orig;
-}
-- (NSDictionary *)serviceCurrentRadioAccessTechnology {
-    return @{@"0000000100000001": g_profile[@"radio_tech"] ?: CTRadioAccessTechnologyLTE};
-}
-%end
-
-%hookf(CFArrayRef, CNCopySupportedInterfaces) {
-    if (g_profile[@"wifi_bssid"]) {
-        CFStringRef ifaces[1] = { CFSTR("en0") };
-        return CFArrayCreate(kCFAllocatorDefault, (const void **)ifaces, 1, &kCFTypeArrayCallBacks);
+    if (g_profile[@"max_fps"]) {
+        return [g_profile[@"max_fps"] integerValue];
     }
     return %orig;
 }
-
-%hookf(CFDictionaryRef, CNCopyCurrentNetworkInfo, CFStringRef interfaceName) {
-    if (g_profile[@"wifi_ssid"] && g_profile[@"wifi_bssid"]) {
-        NSDictionary *dict = @{
-            (__bridge NSString *)kCNNetworkInfoKeySSID: g_profile[@"wifi_ssid"],
-            (__bridge NSString *)kCNNetworkInfoKeyBSSID: g_profile[@"wifi_bssid"]
-        };
-        return (__bridge_retained CFDictionaryRef)dict;
-    }
-    return %orig;
-}
+%end
 
 // ----------------------------------------------------
-// 5. GPS 定位伪造与微米级漂移
+// 4. GPS 定位伪造与微米级漂移
 // ----------------------------------------------------
 %hook CLLocationManager
 - (CLLocation *)location {
@@ -171,7 +135,6 @@ static void loadProfile() {
     double lat = [g_profile[@"latitude"] doubleValue];
     double lon = [g_profile[@"longitude"] doubleValue];
     
-    // 微米级动态抖动算法（防静态坐标风控）
     double driftLat = ((double)arc4random_uniform(200) - 100.0) / 1000000.0;
     double driftLon = ((double)arc4random_uniform(200) - 100.0) / 1000000.0;
 
@@ -184,7 +147,7 @@ static void loadProfile() {
 %end
 
 // ----------------------------------------------------
-// 6. 越狱环境隐藏 (Bypass 40+ 常见检测路径与符号)
+// 5. 越狱环境隐藏
 // ----------------------------------------------------
 static BOOL is_jb_path(const char *path) {
     if (!path) return NO;
@@ -211,16 +174,12 @@ static BOOL is_jb_path(const char *path) {
 }
 
 // ----------------------------------------------------
-// 7. StoreKit 拦截与内购事务伪造
+// 6. StoreKit 内购拦截
 // ----------------------------------------------------
 %hook SKPaymentQueue
 - (void)addPayment:(SKPayment *)payment {
     if ([g_profile[@"bypass_iap"] boolValue]) {
-        SKPaymentTransaction *tx = [[%c(SKPaymentTransaction) alloc] init];
-        // 触发交易成功回执广播
-        if ([self.delegate respondsToSelector:@selector(paymentQueue:updatedTransactions:)]) {
-            [self.delegate paymentQueue:self updatedTransactions:@[tx]];
-        }
+        %log;
         return;
     }
     %orig;
@@ -228,16 +187,14 @@ static BOOL is_jb_path(const char *path) {
 %end
 
 // ----------------------------------------------------
-// 8. 全局 User-Agent 篡改
+// 7. User-Agent 篡改
 // ----------------------------------------------------
-%hook UIWebView
-- (id)init {
-    id res = %orig;
-    if (g_profile[@"custom_ua"]) {
-        NSDictionary *dict = @{@"UserAgent": g_profile[@"custom_ua"]};
-        [[NSUserDefaults standardUserDefaults] registerDefaults:dict];
+%hook NSUserDefaults
+- (NSString *)stringForKey:(NSString *)defaultName {
+    if ([defaultName isEqualToString:@"UserAgent"] && g_profile[@"custom_ua"]) {
+        return g_profile[@"custom_ua"];
     }
-    return res;
+    return %orig;
 }
 %end
 
